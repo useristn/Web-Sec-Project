@@ -1,5 +1,7 @@
 package t4m.toy_store.product.service;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -24,6 +26,9 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     public Page<Product> getAllProducts(Pageable pageable) {
         return productRepository.findAll(pageable);
     }
@@ -43,29 +48,77 @@ public class ProductService {
     public Page<Product> searchProducts(String keyword, Pageable pageable) {
         return productRepository.findByNameContainingIgnoreCase(keyword, pageable);
     }
-    
-    public Page<Product> filterProducts(String keyword, Long categoryId, BigDecimal minPrice, BigDecimal maxPrice, String sortType, Pageable pageable) {
-        // Create pageable without sort (sort is handled in query)
+
+    @SuppressWarnings("unchecked")
+    public Page<Product> filterProducts(String keyword, Long categoryId, BigDecimal minPrice, BigDecimal maxPrice,
+            String sortType, Pageable pageable) {
+
+        if (keyword != null && !keyword.isEmpty()) {
+            String sql = "SELECT * FROM products WHERE LOWER(name) LIKE LOWER('%" + keyword + "%')";
+
+            if (categoryId != null) {
+                sql += " AND category_id = " + categoryId;
+            }
+            if (minPrice != null) {
+                sql += " AND COALESCE(discount_price, price) >= " + minPrice;
+            }
+            if (maxPrice != null) {
+                sql += " AND COALESCE(discount_price, price) <= " + maxPrice;
+            }
+
+            if ("price-asc".equals(sortType)) {
+                sql += " ORDER BY COALESCE(discount_price, price) ASC";
+            } else if ("price-desc".equals(sortType)) {
+                sql += " ORDER BY COALESCE(discount_price, price) DESC";
+            } else if ("name".equals(sortType)) {
+                sql += " ORDER BY name ASC";
+            } else {
+                sql += " ORDER BY created_at DESC";
+            }
+
+            List<Object[]> rawResults = entityManager
+                    .createNativeQuery(sql)
+                    .getResultList();
+
+            List<Product> safeResult = rawResults.stream().map(row -> {
+                Product p = new Product();
+
+                p.setId(row[0] != null ? ((Number) row[0]).longValue() : 0L);
+
+                p.setName(row[1] != null ? row[1].toString() : "N/A");
+
+                return p;
+            }).collect(java.util.stream.Collectors.toList());
+
+            int start = (int) pageable.getOffset();
+            int end = Math.min(start + pageable.getPageSize(), safeResult.size());
+            List<Product> pageContent = (start > safeResult.size()) ? List.of() : safeResult.subList(start, end);
+            return new PageImpl<>(pageContent, pageable, safeResult.size());
+        }
+
         Pageable pageableWithoutSort = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
-        
-        // Call appropriate repository method based on sort type
+
         if (sortType != null) {
             switch (sortType) {
                 case "price-asc":
-                    return productRepository.findByFiltersPriceAsc(keyword, categoryId, minPrice, maxPrice, pageableWithoutSort);
+                    return productRepository.findByFiltersPriceAsc(null, categoryId, minPrice, maxPrice,
+                            pageableWithoutSort);
                 case "price-desc":
-                    return productRepository.findByFiltersPriceDesc(keyword, categoryId, minPrice, maxPrice, pageableWithoutSort);
+                    return productRepository.findByFiltersPriceDesc(null, categoryId, minPrice, maxPrice,
+                            pageableWithoutSort);
                 case "name":
-                    return productRepository.findByFiltersNameAsc(keyword, categoryId, minPrice, maxPrice, pageableWithoutSort);
+                    return productRepository.findByFiltersNameAsc(null, categoryId, minPrice, maxPrice,
+                            pageableWithoutSort);
                 case "newest":
-                    return productRepository.findByFiltersNewest(keyword, categoryId, minPrice, maxPrice, pageableWithoutSort);
+                    return productRepository.findByFiltersNewest(null, categoryId, minPrice, maxPrice,
+                            pageableWithoutSort);
                 default:
-                    return productRepository.findByFiltersNewest(keyword, categoryId, minPrice, maxPrice, pageableWithoutSort);
+                    return productRepository.findByFiltersNewest(null, categoryId, minPrice, maxPrice,
+                            pageableWithoutSort);
             }
         }
-        
-        // Default: newest
-        return productRepository.findByFiltersNewest(keyword, categoryId, minPrice, maxPrice, pageableWithoutSort);
+
+        return productRepository.findByFiltersNewest(null, categoryId, minPrice, maxPrice, pageableWithoutSort);
     }
 
     public List<Category> getAllCategories() {
@@ -76,24 +129,23 @@ public class ProductService {
         return categoryRepository.findById(id).orElse(null);
     }
 
-    // Admin CRUD operations
     public Product createProduct(ProductCreateRequest request) {
         Category category = null;
         if (request.getCategoryId() != null) {
             category = categoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new RuntimeException("Category not found"));
+                    .orElseThrow(() -> new RuntimeException("Category not found"));
         }
 
         Product product = Product.builder()
-            .name(request.getName())
-            .description(request.getDescription())
-            .price(request.getPrice())
-            .discountPrice(request.getDiscountPrice())
-            .imageUrl(request.getImageUrl())
-            .stock(request.getStock() != null ? request.getStock() : 0)
-            .category(category)
-            .featured(request.getFeatured() != null ? request.getFeatured() : false)
-            .build();
+                .name(request.getName())
+                .description(request.getDescription())
+                .price(request.getPrice())
+                .discountPrice(request.getDiscountPrice())
+                .imageUrl(request.getImageUrl())
+                .stock(request.getStock() != null ? request.getStock() : 0)
+                .category(category)
+                .featured(request.getFeatured() != null ? request.getFeatured() : false)
+                .build();
 
         return productRepository.save(product);
     }
@@ -124,7 +176,7 @@ public class ProductService {
         }
         if (request.getCategoryId() != null) {
             Category category = categoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new RuntimeException("Category not found"));
+                    .orElseThrow(() -> new RuntimeException("Category not found"));
             product.setCategory(category);
         }
         if (request.getFeatured() != null) {
@@ -143,58 +195,59 @@ public class ProductService {
 
     public ProductStockStats getStockStats() {
         List<Product> allProducts = productRepository.findAll();
-        
+
         long total = allProducts.size();
         long inStock = allProducts.stream().filter(p -> p.getStock() != null && p.getStock() > 0).count();
         long outOfStock = allProducts.stream().filter(p -> p.getStock() == null || p.getStock() == 0).count();
-        long lowStock = allProducts.stream().filter(p -> p.getStock() != null && p.getStock() > 0 && p.getStock() <= 10).count();
+        long lowStock = allProducts.stream().filter(p -> p.getStock() != null && p.getStock() > 0 && p.getStock() <= 10)
+                .count();
         long totalQuantity = allProducts.stream()
-            .filter(p -> p.getStock() != null)
-            .mapToLong(Product::getStock)
-            .sum();
+                .filter(p -> p.getStock() != null)
+                .mapToLong(Product::getStock)
+                .sum();
 
         return ProductStockStats.builder()
-            .totalProducts(total)
-            .inStockProducts(inStock)
-            .outOfStockProducts(outOfStock)
-            .lowStockProducts(lowStock)
-            .totalStockQuantity(totalQuantity)
-            .build();
+                .totalProducts(total)
+                .inStockProducts(inStock)
+                .outOfStockProducts(outOfStock)
+                .lowStockProducts(lowStock)
+                .totalStockQuantity(totalQuantity)
+                .build();
     }
 
     public Page<Product> getOutOfStockProducts(Pageable pageable) {
         List<Product> outOfStock = productRepository.findAll().stream()
-            .filter(p -> p.getStock() == null || p.getStock() == 0)
-            .toList();
-        
+                .filter(p -> p.getStock() == null || p.getStock() == 0)
+                .toList();
+
         int start = (int) pageable.getOffset();
         int end = Math.min((start + pageable.getPageSize()), outOfStock.size());
         List<Product> pageContent = outOfStock.subList(start, end);
-        
+
         return new PageImpl<>(pageContent, pageable, outOfStock.size());
     }
 
     public Page<Product> getLowStockProducts(int threshold, Pageable pageable) {
         List<Product> lowStock = productRepository.findAll().stream()
-            .filter(p -> p.getStock() != null && p.getStock() > 0 && p.getStock() <= threshold)
-            .toList();
-        
+                .filter(p -> p.getStock() != null && p.getStock() > 0 && p.getStock() <= threshold)
+                .toList();
+
         int start = (int) pageable.getOffset();
         int end = Math.min((start + pageable.getPageSize()), lowStock.size());
         List<Product> pageContent = lowStock.subList(start, end);
-        
+
         return new PageImpl<>(pageContent, pageable, lowStock.size());
     }
 
     public Page<Product> getInStockProducts(int threshold, Pageable pageable) {
         List<Product> inStock = productRepository.findAll().stream()
-            .filter(p -> p.getStock() != null && p.getStock() > threshold)
-            .toList();
-        
+                .filter(p -> p.getStock() != null && p.getStock() > threshold)
+                .toList();
+
         int start = (int) pageable.getOffset();
         int end = Math.min((start + pageable.getPageSize()), inStock.size());
         List<Product> pageContent = inStock.subList(start, end);
-        
+
         return new PageImpl<>(pageContent, pageable, inStock.size());
     }
 

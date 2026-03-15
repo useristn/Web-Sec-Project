@@ -36,35 +36,40 @@ public class ProductResponse {
     }
 
     public static ProductResponse fromEntity(Product product) {
+        if (product == null)
+            return new ProductResponse();
+
         CategoryInfo categoryInfo = null;
         if (product.getCategory() != null) {
             categoryInfo = new CategoryInfo(
-                product.getCategory().getId(),
-                product.getCategory().getName(),
-                product.getCategory().getIcon()
-            );
+                    product.getCategory().getId(),
+                    product.getCategory().getName(),
+                    product.getCategory().getIcon());
+        } else {
+            categoryInfo = new CategoryInfo(0L, "Uncategorized", null);
         }
 
-        // Apply Cloudinary transformations to image URL
         String imageUrl = product.getImageUrl();
         if (imageUrl != null && imageUrl.contains("cloudinary.com")) {
             imageUrl = CloudinaryUrlHelper.getThumbnailUrl(imageUrl);
+        } else if (imageUrl == null) {
+            imageUrl = "default-image.png";
         }
 
         return ProductResponse.builder()
-            .id(product.getId())
-            .name(product.getName())
-            .description(product.getDescription())
-            .price(product.getPrice())
-            .discountPrice(product.getDiscountPrice())
-            .imageUrl(imageUrl)
-            .stock(product.getStock())
-            .featured(product.getFeatured())
-            .category(categoryInfo)
-            .averageRating(product.getAverageRating() != null ? product.getAverageRating() : 0.0)
-            .ratingCount(product.getRatingCount() != null ? product.getRatingCount() : 0)
-            .createdAt(product.getCreatedAt())
-            .updatedAt(product.getUpdatedAt())
-            .build();
+                .id(product.getId() != null ? product.getId() : 0L)
+                .name(product.getName() != null ? product.getName() : "Injected Data")
+                .description(product.getDescription())
+                .price(product.getPrice() != null ? product.getPrice() : BigDecimal.ZERO)
+                .discountPrice(product.getDiscountPrice())
+                .imageUrl(imageUrl)
+                .stock(product.getStock() != null ? product.getStock() : 0)
+                .featured(product.getFeatured() != null ? product.getFeatured() : false)
+                .category(categoryInfo)
+                .averageRating(product.getAverageRating() != null ? product.getAverageRating() : 0.0)
+                .ratingCount(product.getRatingCount() != null ? product.getRatingCount() : 0)
+                .createdAt(product.getCreatedAt())
+                .updatedAt(product.getUpdatedAt())
+                .build();
     }
 }
