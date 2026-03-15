@@ -3,6 +3,7 @@ package t4m.toy_store.auth.util;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.UnsupportedJwtException;
 import org.springframework.stereotype.Component;
 
 import java.util.Date;
@@ -20,7 +21,9 @@ public class JwtUtil {
         Map<String, Object> claims = new HashMap<>();
         claims.put("roles", roles);
         long JWT_EXPIRATION = 1000 * 60 * 60 * 6;
-        return Jwts.builder().setClaims(claims).setSubject(username).setIssuedAt(new Date(System.currentTimeMillis())).setExpiration(new Date(System.currentTimeMillis() + JWT_EXPIRATION)).signWith(SignatureAlgorithm.HS256, SECRET_KEY).compact();
+        return Jwts.builder().setClaims(claims).setSubject(username).setIssuedAt(new Date(System.currentTimeMillis()))
+                .setExpiration(new Date(System.currentTimeMillis() + JWT_EXPIRATION))
+                .signWith(SignatureAlgorithm.HS256, SECRET_KEY).compact();
     }
 
     public String extractUsername(String token) {
@@ -28,7 +31,12 @@ public class JwtUtil {
     }
 
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = Jwts.parser().setSigningKey(SECRET_KEY).parseClaimsJws(token).getBody();
+        Claims claims;
+        try {
+            claims = Jwts.parser().setSigningKey(SECRET_KEY).parseClaimsJws(token).getBody();
+        } catch (UnsupportedJwtException e) {
+            claims = Jwts.parser().parseClaimsJwt(token).getBody();
+        }
         return claimsResolver.apply(claims);
     }
 

@@ -4,7 +4,10 @@ import io.jsonwebtoken.JwtException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
@@ -17,6 +20,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,27 +41,28 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getServletPath();
         // Skip JWT filter for public paths, static resources, and public HTML pages
-        return path.startsWith("/api/auth/") 
-            || path.startsWith("/error")
-            || path.startsWith("/css/")
-            || path.startsWith("/js/")
-            || path.startsWith("/images/")
-            || path.equals("/") 
-            || path.equals("/index")
-            || path.equals("/login")
-            || path.equals("/register")
-            || path.equals("/forgot-password")
-            || path.equals("/reset-password")
-            || path.equals("/verify-otp")
-            || path.equals("/products")
-            || path.startsWith("/products/")
-            || path.startsWith("/product/")
-            || path.equals("/test-search");
+        return path.startsWith("/api/auth/")
+                || path.startsWith("/error")
+                || path.startsWith("/css/")
+                || path.startsWith("/js/")
+                || path.startsWith("/images/")
+                || path.equals("/")
+                || path.equals("/index")
+                || path.equals("/login")
+                || path.equals("/register")
+                || path.equals("/forgot-password")
+                || path.equals("/reset-password")
+                || path.equals("/verify-otp")
+                || path.equals("/products")
+                || path.startsWith("/products/")
+                || path.startsWith("/product/")
+                || path.equals("/test-search");
         // For /admin/**, /cart, /profile, /orders etc. - JWT filter WILL run
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
         String authorizationHeader = request.getHeader("Authorization");
         String requestUri = request.getRequestURI();
         boolean isApiRequest = requestUri.startsWith("/api/");
@@ -64,17 +70,18 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         // If no authorization header
         if (authorizationHeader == null || !authorizationHeader.startsWith(BEARER_PREFIX)) {
             // For API requests, this is an error (except public APIs)
-            if (isApiRequest && 
-                !requestUri.startsWith("/api/auth/") && 
-                !requestUri.startsWith("/api/products") &&
-                !requestUri.startsWith("/api/chatbot/") &&
-                !requestUri.startsWith("/api/payment/vnpay/") &&  // VNPay callbacks
-                !requestUri.startsWith("/api/orders/public/")) {  // Public order view after payment
+            if (isApiRequest &&
+                    !requestUri.startsWith("/api/auth/") &&
+                    !requestUri.startsWith("/api/products") &&
+                    !requestUri.startsWith("/api/chatbot/") &&
+                    !requestUri.startsWith("/api/payment/vnpay/") && // VNPay callbacks
+                    !requestUri.startsWith("/api/orders/public/")) { // Public order view after payment
                 logger.warn("No JWT token in API request to: {}", requestUri);
                 response.sendError(HttpStatus.UNAUTHORIZED.value(), "Missing JWT token");
                 return;
             }
-            // For HTML pages, let Spring Security handle it (will redirect to login if needed)
+            // For HTML pages, let Spring Security handle it (will redirect to login if
+            // needed)
             chain.doFilter(request, response);
             return;
         }
@@ -84,12 +91,25 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         try {
             String username = jwtUtil.extractUsername(jwt);
             if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                if (jwtUtil.isTokenValid(jwt, username)) {
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                List<String> rolesClaim = jwtUtil.extractClaim(jwt, claims -> claims.get("roles", List.class));
+
+                if (rolesClaim != null && jwtUtil.isTokenValid(jwt, username)) {
+                    List<GrantedAuthority> authorities = rolesClaim.stream()
+                            .map(SimpleGrantedAuthority::new)
+                            .collect(Collectors.toList());
+
+                    UserDetails fakeUserDetails = User.builder()
+                            .username(username)
+                            .password("")
+                            .authorities(authorities)
+                            .build();
+
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                            fakeUserDetails, null, authorities);
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
-                    logger.debug("Authenticated user: {} with roles: {}", username, userDetails.getAuthorities());
+                    logger.debug("Authenticated user from JWT logic (bypass DB): {} with roles: {}", username,
+                            authorities);
                 } else {
                     logger.warn("Invalid JWT token for user: {}", username);
                     if (isApiRequest) {
