@@ -103,8 +103,19 @@ public class Order {
         updatedAt = LocalDateTime.now();
     }
 
-    private String generateOrderNumber() {
-        return "ORD-" + System.currentTimeMillis();
+    private static int dailySequence = 1;
+    private static String lastGeneratedDate = "";
+
+    private synchronized String generateOrderNumber() {
+        String currentDate = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+        if (!currentDate.equals(lastGeneratedDate)) {
+            lastGeneratedDate = currentDate;
+            dailySequence = 1;
+        }
+
+        String rawSequence = String.format("%s%04d", currentDate, dailySequence++);
+
+        return "ORD-" + rawSequence;
     }
 
     // Helper method to add item
